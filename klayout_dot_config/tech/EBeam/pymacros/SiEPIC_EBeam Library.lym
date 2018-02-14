@@ -100,17 +100,8 @@ with:
 
 
 """
-
-# import xml before lumapi (SiEPIC.lumerical), otherwise XML doesn't work:
-from xml.etree import cElementTree
-
 import math
 from SiEPIC.utils import get_technology, get_technology_by_name
-
-#import numpy as n
-MODULE_NUMPY = False
-
-dbu = 0.001
 
 # Import KLayout Python API methods:
 # Box, Point, Polygon, Text, Trans, LayerInfo, etc
@@ -125,7 +116,7 @@ class Waveguide(PCellDeclarationHelper):
     super(Waveguide, self).__init__()
     # declare the parameters
     TECHNOLOGY = get_technology_by_name('EBeam')
-    self.param("path", self.TypeShape, "Path", default = Path([Point(0,0), Point(10,0), Point(10,10)], 0.5))
+    self.param("path", self.TypeShape, "Path", default = DPath([DPoint(0,0), DPoint(10,0), DPoint(10,10)], 0.5))
     self.param("radius", self.TypeDouble, "Radius", default = 5)
     self.param("width", self.TypeDouble, "Width", default = 0.5)
     self.param("adiab", self.TypeBoolean, "Adiabatic", default = False)
@@ -141,28 +132,30 @@ class Waveguide(PCellDeclarationHelper):
   def coerce_parameters_impl(self):
     pass
           
-  def can_create_from_shape(self, layout, shape, layer):
-    return shape.is_path()
+  def can_create_from_shape_impl(self):
+    return self.shape.is_path()
 
-  def transformation_from_shape(self, layout, shape, layer):
+  def transformation_from_shape_impl(self):
     return Trans(Trans.R0,0,0)
 
-  def parameters_from_shape(self, layout, shape, layer):
-    self._param_values = []
-    for pd in self._param_decls:
-      self._param_values.append(pd.default)
-    return self._param_values
+  def parameters_from_shape_impl(self):
+    self.path = self.shape.dpath
         
   def produce_impl(self):
 
     from SiEPIC.utils import arc_xy, arc_bezier, angle_vector, angle_b_vectors, inner_angle_b_vectors, translate_from_normal
     from math import cos, sin, pi, sqrt
     import pya
+    from SiEPIC.extend import to_itype
+    
+    print("EBeam.Waveguide")
     
     TECHNOLOGY = get_technology_by_name('EBeam')
     
     dbu = self.layout.dbu
-    path = self.path*(1/dbu)
+    wg_width = to_itype(self.width,dbu)
+    path = self.path.to_itype(dbu)
+
     if not (len(self.layers)==len(self.widths) and len(self.layers)==len(self.offsets) and len(self.offsets)==len(self.widths)):
       raise Exception("There must be an equal number of layers, widths and offsets")
     path.unique_points()
@@ -170,8 +163,8 @@ class Waveguide(PCellDeclarationHelper):
     for lr in range(0, len(self.layers)):
       layer = self.layout.layer(TECHNOLOGY[self.layers[lr]])
       
-      width = float(self.widths[lr])/dbu
-      offset = float(self.offsets[lr])/dbu
+      width = to_itype(self.widths[lr],dbu)
+      offset = to_itype(self.offsets[lr],dbu)
 
       pts = path.get_points()
       wg_pts = [pts[0]]
@@ -180,7 +173,7 @@ class Waveguide(PCellDeclarationHelper):
         dis1 = pts[i].distance(pts[i-1])
         dis2 = pts[i].distance(pts[i+1])
         angle = angle_vector(pts[i]-pts[i-1])/90
-        pt_radius = self.radius/dbu
+        pt_radius = to_itype(self.radius,dbu)
         # determine the radius, based on how much space is available
         if len(pts)==3:
           pt_radius = min (dis1, dis2, pt_radius)
@@ -230,23 +223,23 @@ class Waveguide(PCellDeclarationHelper):
     if angle_vec == 0: # horizontal
       halign = 2 # right
       angle=0
-      pt2=pts[0] + Point(0, self.width/dbu)
-      pt3=pts[0] + Point(0, -self.width/dbu)
+      pt2=pts[0] + Point(0, wg_width)
+      pt3=pts[0] + Point(0, -wg_width)
     if angle_vec == 2: # horizontal
       halign = 0 # left
       angle = 0
-      pt2=pts[0] + Point(0, self.width/dbu)
-      pt3=pts[0] + Point(0, -self.width/dbu)
+      pt2=pts[0] + Point(0, wg_width)
+      pt3=pts[0] + Point(0, -wg_width)
     if angle_vec == 1: # vertical
       halign = 2 # right
       angle = 1
-      pt2=pts[0] + Point(self.width/dbu,0)
-      pt3=pts[0] + Point(-self.width/dbu,0)
+      pt2=pts[0] + Point(wg_width,0)
+      pt3=pts[0] + Point(-wg_width,0)
     if angle_vec == -1: # vertical
       halign = 0 # left
       angle = 1
-      pt2=pts[0] + Point(self.width/dbu,0)
-      pt3=pts[0] + Point(-self.width/dbu,0)
+      pt2=pts[0] + Point(wg_width,0)
+      pt3=pts[0] + Point(-wg_width,0)
       
     t = Trans(angle, False, pts[0]) 
     text = Text ('Lumerical_INTERCONNECT_library=Design kits/ebeam', t, 0.1/dbu, -1)
@@ -259,14 +252,11 @@ class Waveguide(PCellDeclarationHelper):
     t = Trans(angle, False, pt3)
     pts_txt = str([ [round(p.to_dtype(dbu).x,3), round(p.to_dtype(dbu).y,3)] for p in pts ]).replace(', ',',')
     text = Text ( \
-      'Spice_param:wg_length=%.3fu wg_width=%.3fu points=%s radius=%s' %\
+      'Spice_param:wg_length=%.3fu wg_width=%.3fu points="%s" radius=%s' %\
         (waveguide_length, self.width, pts_txt,self.radius ), t, 0.1/dbu, -1  )
     text.halign=halign
     shape = self.cell.shapes(LayerDevRecN).insert(text)
 
-    if self.cell.shapes(self.layout.guiding_shape_layer()).is_empty():
-      self.cell.shapes(self.layout.guiding_shape_layer()).insert(Path(path.get_points(), 0))
-    
 
 class ebeam_dc_halfring_straight(PCellDeclarationHelper):
   """
@@ -441,18 +431,18 @@ class Waveguide_SBend(PCellDeclarationHelper):
 
     LayerSi = self.layer
     LayerSiN = ly.layer(LayerSi)
-    LayerSiSPN = ly.layer(LayerSiSP)
+    #LayerSiSPN = ly.layer(LayerSiSP)
     LayerPinRecN = ly.layer(self.pinrec)
     LayerDevRecN = ly.layer(self.devrec)
-    LayerTextN = ly.layer(LayerText)
+    #LayerTextN = ly.layer(get_technology()['Text'])
 
 
     from math import pi, cos, sin, log, sqrt, acos
     
     length = self.length / dbu
-    w = self.wg_width / dbu
-    r = self.radius / dbu
-    h = self.height / dbu
+    w = round(self.wg_width / dbu)
+    r = round(self.radius / dbu)
+    h = round(self.height / dbu)
     theta = acos((r-abs(h/2))/r)*180/pi
     x = 2*r*sin(theta/180.0*pi)
     straight_l = (length - x)/2
@@ -461,7 +451,7 @@ class Waveguide_SBend(PCellDeclarationHelper):
 
     if (straight_l &gt;= 0):
       circle_fraction = abs(theta) / 360.0
-      npoints = int(points_per_circle(r*dbu) * circle_fraction)
+      npoints = int(points_per_circle(r) * circle_fraction)
       if npoints == 0:
         npoints = 1
       da = 2 * pi / npoints * circle_fraction # increment, in radians
@@ -514,8 +504,8 @@ class Waveguide_SBend(PCellDeclarationHelper):
     
     waveguide_length = (2*pi*r*(2*theta/360.0)+straight_l*2)*dbu
 
-    # Pins on the waveguide:
-    pin_length = 200
+    # Create the pins on the waveguides, as short paths:
+    from SiEPIC._globals import PIN_LENGTH as pin_length
     x = self.length / dbu
     t = Trans(Trans.R0, x,h)
     pin = Path([Point(-pin_length/2,0), Point(pin_length/2,0)], w)
@@ -554,6 +544,7 @@ class Waveguide_SBend(PCellDeclarationHelper):
     # Create the device recognition layer -- make it 1 * wg_width away from the waveguides.
     box1 = Box(0, min(-w*3,h-w*3), length, max(w*3,h+w*3))
     shapes(LayerDevRecN).insert(box1)
+
 
 
 class Waveguide_bump(PCellDeclarationHelper):
@@ -612,37 +603,34 @@ class Waveguide_bump(PCellDeclarationHelper):
 
 
     from math import pi, cos, sin, log, sqrt
-    from SiEPIC.utils import arc, arc_to_waveguide, points_per_circle
+    from SiEPIC.utils import arc, arc_to_waveguide, points_per_circle, arc_wg
     
     x = 0
     y = 0
     theta = self.theta
-    length = self.length
 #    2*pi*r*(4*theta/360) = length + self.delta_length
-    w = self.wg_width
+
+    from SiEPIC.extend import to_itype
+    w = to_itype(self.wg_width,dbu)
+    length = to_itype(self.length,dbu)
     r = length/4/sin(theta/180.0*pi)
     waveguide_length = 2*pi*r*(4*theta/360.0)
     
-# layout_arc_wg_dbu(self.cell, Layerm1N, x0,y0, r_m1_in, w_m1_in, angle_min_doping, angle_max_doping)
-#with:
-# self.cell.shapes(Layerm1N).insert(Polygon(arc(w_m1_in, angle_min_doping, angle_max_doping) + [Point(0, 0)]).transformed(t))
-    
     #arc_to_waveguide(pts, width):
     #arc(radius, start, stop)
-    t = Trans(Trans.R0,x/dbu, (y+r)/dbu)
-    self.cell.shapes(LayerSiN).insert(arc_to_waveguide(arc(r/dbu, 270., 270.+theta), w/dbu).transformed(t))
+    t = Trans(Trans.R0,x, round(y+r))
+    self.cell.shapes(LayerSiN).insert(arc_wg(r, w, 270., 270.+theta).transformed(t))
 
-    t = Trans(Trans.R0,(x+length/2)/dbu, (y-r+ 2*r*(1-cos(theta/180.0*pi)))/dbu)
-    self.cell.shapes(LayerSiN).insert(arc_to_waveguide(arc(r/dbu, 90.-theta, 90.+theta), w/dbu).transformed(t))
+    t = Trans(Trans.R0,round(x+length/2), round(y-r+ 2*r*(1-cos(theta/180.0*pi))))
+    self.cell.shapes(LayerSiN).insert(arc_wg(r, w, 90.-theta, 90.+theta).transformed(t))
 
-    t = Trans(Trans.R0,(x+length)/dbu, (y+r)/dbu)
-    self.cell.shapes(LayerSiN).insert(arc_to_waveguide(arc(r/dbu, 270.-theta, 270), w/dbu).transformed(t))
+    t = Trans(Trans.R0,round(x+length), round(y+r))
+    self.cell.shapes(LayerSiN).insert(arc_wg(r, w, 270.-theta, 270).transformed(t))
 
 
-    # Pins on the waveguide:
-    pin_length = 100
+    # Create the pins on the waveguides, as short paths:
+    from SiEPIC._globals import PIN_LENGTH as pin_length
     x = self.length / dbu
-    w = self.wg_width / dbu
     t = Trans(Trans.R0, x,0)
     pin = Path([Point(-pin_length/2,0), Point(pin_length/2,0)], w)
     pin_t = pin.transformed(t)
@@ -676,15 +664,16 @@ class Waveguide_bump(PCellDeclarationHelper):
     shape = shapes(LayerDevRecN).insert(text)
     shape.text_size = 0.1/dbu
 
-    t = Trans(Trans.R0, self.length / dbu /6, -w*2)
+    t = Trans(Trans.R0, self.length /6, -w*2)
     text = Text ('dL = %.4f um' % ((waveguide_length-length)), t)
     shape = shapes(LayerTextN).insert(text)
     shape.text_size = 0.6/dbu
 
     # Create the device recognition layer -- make it 1 * wg_width away from the waveguides.
-    box1 = Box(0, -w*3, length/dbu, w*3+(2*r*(1-cos(theta/180.0*pi)))/dbu)
+    box1 = Box(0, -w*3, length, w*3+(2*r*(1-cos(theta/180.0*pi))))
     shapes(LayerDevRecN).insert(box1)
 
+    print("SiEPIC EBeam: Waveguide_bump complete.")
 
 def layout_pgtext(cell, layer, x, y, text, mag):
     # example usage:
@@ -790,10 +779,12 @@ class Waveguide_Bend(PCellDeclarationHelper):
     # draw the quarter-circle
     x = -r
     y = r
-    layout_arc_wg_dbu(self.cell, LayerSiN, x, y, r, w, 270, 360)
+   # layout_arc_wg_dbu(self.cell, LayerSiN, x, y, r, w, 270, 360)
+    t = Trans(Trans.R0,x, y)
+    self.cell.shapes(LayerSiN).insert(arc_to_waveguide(arc(r, 270, 360), w).transformed(t))
     
-    # Create the pins, as short paths:
-    pin_length = 200 # database units, = 0.2 microns
+    # Create the pins on the waveguides, as short paths:
+    from SiEPIC._globals import PIN_LENGTH as pin_length
     
     # Pin on the top side:
     p2 = [Point(0, y+pin_length/2), Point(0, y-pin_length/2)]
@@ -820,11 +811,13 @@ class Waveguide_Bend(PCellDeclarationHelper):
     shape.text_size = 0.4/dbu
 
     # Create the device recognition layer -- make it 1 * wg_width away from the waveguides.
-    layout_arc_wg_dbu(self.cell, LayerDevRecN, x, y, r, w*3, 270, 360)
+    t = Trans(Trans.R0,x, y)
+    self.cell.shapes(LayerDevRecN).insert(arc_to_waveguide(arc(r, 270, 360), w*3).transformed(t))
+    #layout_arc_wg_dbu(self.cell, LayerDevRecN, x, y, r, w*3, 270, 360)
 
     # Compact model information
     t = Trans(Trans.R0, x+r/10, 0)
-    text = Text ("Lumerical_INTERCONNECT_library=Design kits/ebeam", t)
+    text = Text ("Lumerical_INTERCONNECT_library=Design kits/EBeam", t)
     shape = shapes(LayerDevRecN).insert(text)
     shape.text_size = r/100
     t = Trans(Trans.R0, x+r/10, r/4)
@@ -939,8 +932,8 @@ class ebeam_bragg_te1550(PCellDeclarationHelper):
         shapes(LayerSiN).insert(box3)
 
     
-    # Pins on the waveguide:
-    pin_length = 200
+    # Create the pins on the waveguides, as short paths:
+    from SiEPIC._globals import PIN_LENGTH as pin_length
 
     t = Trans(Trans.R0, 0,0)
     pin = Path([Point(pin_length/2, 0), Point(-pin_length/2, 0)], w)
@@ -1047,8 +1040,8 @@ class ebeam_taper_te1550(PCellDeclarationHelper):
     shapes(LayerSiN).insert(Polygon(pts))
 
     
-    # Create the pins, as short paths:
-    pin_length = 200 # database units, = 0.2 microns
+    # Create the pins on the waveguides, as short paths:
+    from SiEPIC._globals import PIN_LENGTH as pin_length
     
     # Pin on the left side:
     p1 = [Point(pin_length/2,0), Point(-pin_length/2,0)]
@@ -1063,7 +1056,7 @@ class ebeam_taper_te1550(PCellDeclarationHelper):
     shape.text_size = 0.4/dbu
 
     # Pin on the right side:
-    p2 = [Point(length+pin_length/2,0), Point(length-pin_length/2,0)]
+    p2 = [Point(length-pin_length/2,0), Point(length+pin_length/2,0)]
     p2c = Point(length, 0)
     self.set_p2 = p2c
     self.p2 = p2c
@@ -1075,8 +1068,7 @@ class ebeam_taper_te1550(PCellDeclarationHelper):
     shape.text_size = 0.4/dbu
 
     # Create the device recognition layer -- make it 1 * wg_width away from the waveguides.
-    points = [[0,0], [length, 0]]
-    path = points_to_path(points,w2+w1*2)
+    path = Path([Point(0,0),Point(length,0)],w2+w1*2)
     shapes(LayerDevRecN).insert(path.simple_polygon())
 
 
